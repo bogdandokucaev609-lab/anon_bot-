@@ -1,14 +1,15 @@
 import telebot
 from telebot import types
+import keep_alive  # <-- Важно, чтобы Render видел веб-сервер
 
-# ⚠️ СЮДА ВСТАВЬ СВОЙ ТОКЕН ИЗ BOTFATHER (между кавычками)
+# ⚠️ ВСТАВЬ СВОЙ ТОКЕН МЕЖДУ КАВЫЧКАМИ
 TOKEN = '9199104364:AAFKfPe2d5tw3nmlu010CwjfPm9bH8tXlPQ'
 bot = telebot.TeleBot(TOKEN)
 
-# Хранилища (в памяти, для теста с друзьями хватит)
-users = {}          # id: {"name": "...", "interests": "..."}
-waiting = []        # очередь тех, кто ищет собеседника
-chats = {}          # id: partner_id (кто с кем говорит)
+# Хранилища
+users = {}
+waiting = []
+chats = {}
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -45,7 +46,6 @@ def find(message):
 
     waiting.append(uid)
 
-    # Ищем пару среди ожидающих
     if len(waiting) >= 2:
         user1 = waiting.pop(0)
         user2 = waiting.pop(0)
@@ -78,13 +78,13 @@ def forward(message):
     if uid in chats:
         partner = chats[uid]
         try:
-            # Пересылаем сообщение анонимно (от имени бота)
             bot.send_message(partner, f"💬 {message.text}")
         except:
             bot.send_message(uid, "Не удалось отправить. Возможно, собеседник заблокировал бота.")
     else:
         bot.send_message(uid, "Ты не в чате. Напиши /find чтобы найти собеседника.")
 
-# Запуск
+# Запуск веб-сервера и бота
+keep_alive.keep_alive()
 print("Бот запущен...")
 bot.infinity_polling()
