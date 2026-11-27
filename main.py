@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import aiosqlite
+import keep_alive # <-- ДОБАВЛЕНО ДЛЯ RENDER
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -10,7 +11,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "9199104364:AAHAnW48xTlYhqYZ5GcspN_97JRjANxV7Is"
-ADMIN_ID = 6835078005 # Замените на ваш ID (узнать через @userinfobot)
+ADMIN_ID = 6835078005
 
 logging.basicConfig(level=logging.INFO)
 
@@ -173,14 +174,11 @@ async def admin_complaints(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=get_admin_menu())
     await callback.answer()
 
-# --- ЛОГИКА ЧАТА (Жалоба и Рейтинг) ---
-# Заглушка словаря для связи собеседников (в реальном боте вы заполняете его при поиске)
+# --- ЛОГИКА ЧАТА ---
 active_chats = {} 
 
 @dp.message(F.text == "🔍 Найти собеседника")
 async def find_partner(message: types.Message):
-    # Здесь должна быть ваша логика поиска. Пока для теста:
-    # Допустим, мы нашли собеседника с ID 111222333
     dummy_partner_id = 111222333 
     active_chats[message.from_user.id] = dummy_partner_id
     
@@ -214,8 +212,10 @@ async def process_complaint(message: types.Message, state: FSMContext):
     await message.answer("✅ Жалоба отправлена администратору. Спасибо!", reply_markup=get_chat_menu())
     await state.clear()
     
-    # Уведомление админу
-    await bot.send_message(ADMIN_ID, f"⚠️ **Новая жалоба!**\nОт: {message.from_user.id}\nНа: {partner_id}\nПричина: {message.text}")
+    try:
+        await bot.send_message(ADMIN_ID, f"⚠️ **Новая жалоба!**\nОт: {message.from_user.id}\nНа: {partner_id}\nПричина: {message.text}")
+    except:
+        pass
 
 @dp.callback_query(F.data == "rate_start")
 async def start_rating(callback: CallbackQuery):
@@ -242,6 +242,7 @@ async def process_rating(callback: CallbackQuery):
 
 # --- ЗАПУСК ---
 async def main():
+    keep_alive.keep_alive() # <-- ДОБАВЛЕНО ДЛЯ RENDER
     await init_db()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
