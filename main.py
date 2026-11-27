@@ -1,15 +1,18 @@
 import telebot
 from telebot import types
-import keep_alive  # <-- Важно, чтобы Render видел веб-сервер
+import keep_alive
 
-# ⚠️ ВСТАВЬ СВОЙ ТОКЕН МЕЖДУ КАВЫЧКАМИ
+# ⚠️ ВСТАВЬ СВОЙ ТОКЕН
 TOKEN = '9199104364:AAFKfPe2d5tw3nmlu010CwjfPm9bH8tXlPQ'
+# ⚠️ ВСТАВЬ СВОЙ ID (цифры от @userinfobot)
+ADMIN_ID = 6835078005
+
 bot = telebot.TeleBot(TOKEN)
 
 # Хранилища
-users = {}
-waiting = []
-chats = {}
+users = {}          # id: {"name": "...", "interests": "..."}
+waiting = []        # очередь ожидания
+chats = {}          # id: partner_id
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -22,7 +25,7 @@ def start(message):
 
 def ask_name(message):
     uid = message.from_user.id
-    users[uid] = {"name": message.text}
+    users[uid] = {"name": message.text, "id": uid}
     msg = bot.send_message(uid, f"Приятно познакомиться, {message.text}!\n\nЧто тебе интересно? (кино, музыка, игры, спорт — пиши через запятую)")
     bot.register_next_step_handler(msg, ask_interests)
 
@@ -45,16 +48,15 @@ def find(message):
         return
 
     waiting.append(uid)
-
     if len(waiting) >= 2:
         user1 = waiting.pop(0)
         user2 = waiting.pop(0)
         chats[user1] = user2
         chats[user2] = user1
-        bot.send_message(user1, "✅ Собеседник найден! Вы общаетесь анонимно.\n/find — искать нового\n/stop — завершить")
-        bot.send_message(user2, "✅ Собеседник найден! Вы общаетесь анонимно.\n/find — искать нового\n/stop — завершить")
+        bot.send_message(user1, "✅ Собеседник найден!\n/find — новый\n/stop — завершить")
+        bot.send_message(user2, "✅ Собеседник найден!\n/find — новый\n/stop — завершить")
     else:
-        bot.send_message(uid, "🔍 Ищу собеседника... Как только кто-то появится, я вас соединю.")
+        bot.send_message(uid, "🔍 Ищу собеседника...")
 
 @bot.message_handler(commands=['stop'])
 def stop(message):
@@ -65,12 +67,62 @@ def stop(message):
         if partner in chats:
             del chats[partner]
             bot.send_message(partner, "Собеседник завершил чат. Напиши /find чтобы найти нового.")
-        bot.send_message(uid, "Чат завершён. Напиши /find чтобы найти нового.")
+        bot.send_message(uid, "Чат завершён.")
     elif uid in waiting:
         waiting.remove(uid)
         bot.send_message(uid, "Поиск отменён.")
-    else:
-        bot.send_message(uid, "Ты не в чате.")
+
+# === АДМИН ПАНЕЛЬ ===
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "У тебя нет доступа к этой команде.")
+        return
+    
+    markup = types.InlineKeyboardMarkup()
+    btn_stats = types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
+    btn_users = types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
+    btn_broadcast = types.InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")
+    markup.add(btn_stats, btn_users, btn_broadcast)
+    
+    bot.send_message(message.chat.id, "🛡️ Админ-панель\nВыбери действие:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
+def admin_actions(call):
+    if call.from_user.id != ADMIN_ID:
+        return
+    
+    if call.data == "admin_stats":
+        text = f"📊 Статистика:\n\nВсего пользователей: {len(users)}\nВ чатах сейчас: {len(chats)//2}\nВ поиске: {len(waiting)}"
+        bot.send_message(call.message.chat.id, text)
+        
+    elif call.data == "admin_users":
+        if not users:
+            bot.send_message(call.message.chat.id, "Пока нет пользователей.")
+            return
+        text = "👥 Список пользователей:\n\n"
+        for uid, info in users.items():
+            text += f"ID: {uid} | Ник: {info.get('name')}\n"
+        bot.send_message(call.message.chat.id, text[:4000]) # обрезаем если слишком длинно
+        
+    elif call.data == "admin_broadcast":
+        msg = bot.send_message(call.message.chat.id, "Напиши текст для рассылки (он уйдет всем пользователям):")
+        bot.register_next_step_handler(msg, do_broadcast)
+
+def do_broadcast(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    text = message.text
+    count = 0
+    for uid in users.keys():
+        try:
+            bot.send_message(uid, f"📢 Сообщение от админа:\n\n{text}")
+            count += 1
+        except:
+            pass
+    bot.send_message(ADMIN_ID, f"✅ Рассылка завершена. Отправлено: {count} пользователям.")
+
+# ====================
 
 @bot.message_handler(content_types=['text'])
 def forward(message):
@@ -80,11 +132,10 @@ def forward(message):
         try:
             bot.send_message(partner, f"💬 {message.text}")
         except:
-            bot.send_message(uid, "Не удалось отправить. Возможно, собеседник заблокировал бота.")
+            bot.send_message(uid, "Не удалось отправить.")
     else:
-        bot.send_message(uid, "Ты не в чате. Напиши /find чтобы найти собеседника.")
+        bot.send_message(uid, "Ты не в чате. Напиши /find")
 
-# Запуск веб-сервера и бота
 keep_alive.keep_alive()
 print("Бот запущен...")
 bot.infinity_polling()
