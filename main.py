@@ -1,111 +1,250 @@
-import telebot
-from telebot import types
-import keep_alive
+import asyncio
+import logging
+import aiosqlite
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
-TOKEN = '9199104364:AAFKfPe2d5tw3nmlu010CwjfPm9bH8tXlPQ'
-ADMIN_ID = 6835078005
+# --- НАСТРОЙКИ ---
+BOT_TOKEN = "9199104364:AAFKfPe2d5tw3nmlu010CwjfPm9bH8tXlPQ"
+ADMIN_ID = 6835078005 # Замените на ваш ID (узнать через @userinfobot)
 
-bot = telebot.TeleBot(TOKEN)
+logging.basicConfig(level=logging.INFO)
 
-users = {}
-waiting = []
-chats = {}
+# --- БАЗА ДАННЫХ ---
+async def init_db():
+    async with aiosqlite.connect("bot_database.db") as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                nickname TEXT,
+                interests TEXT,
+                rating_sum INTEGER DEFAULT 0,
+                rating_count INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS complaints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_user_id INTEGER,
+                against_user_id INTEGER,
+                reason TEXT
+            )
+        """)
+        await db.commit()
 
-@bot.message_handler(commands=['start'])
-def start(message):
-    uid = message.from_user.id
-    if uid in users:
-        bot.send_message(uid, "Ты уже зарегистрирован. Пиши /find чтобы искать собеседника.")
-        return
-    msg = bot.send_message(uid, "Привет! Давай знакомиться анонимно.\n\nКак тебя называть? (придумай ник)")
-    bot.register_next_step_handler(msg, ask_name)
+# --- СОСТОЯНИЯ (FSM) ---
+class UserStates(StatesGroup):
+    waiting_for_nickname = State()
+    waiting_for_interests = State()
+    waiting_for_complaint_reason = State()
 
-def ask_name(message):
-    uid = message.from_user.id
-    users[uid] = {"name": message.text, "id": uid}
-    msg = bot.send_message(uid, f"Приятно познакомиться, {message.text}!\n\nЧто тебе интересно?")
-    bot.register_next_step_handler(msg, ask_interests)
+# --- КЛАВИАТУРЫ ---
+def get_main_menu():
+    builder = ReplyKeyboardBuilder()
+    builder.row(KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="⭐ Мой рейтинг"))
+    builder.row(KeyboardButton(text="🔍 Найти собеседника"), KeyboardButton(text="⚙️ Настройки"))
+    return builder.as_markup(resize_keyboard=True)
 
-def ask_interests(message):
-    uid = message.from_user.id
-    users[uid]["interests"] = message.text
-    bot.send_message(uid, "Готово! Теперь нажми /find чтобы найти анонимного собеседника.")
+def get_admin_menu():
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
+    builder.row(InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"))
+    builder.row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
+    builder.row(InlineKeyboardButton(text="⚠️ Жалобы", callback_data="admin_complaints"))
+    return builder.as_markup()
 
-@bot.message_handler(commands=['find'])
-def find(message):
-    uid = message.from_user.id
-    if uid not in users:
-        bot.send_message(uid, "Сначала напиши /start")
-        return
-    if uid in chats:
-        bot.send_message(uid, "Ты уже в чате. Напиши /stop чтобы выйти.")
-        return
-    if uid in waiting:
-        bot.send_message(uid, "Уже ищу... подожди.")
-        return
+def get_chat_menu():
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🚨 Пожаловаться", callback_data="complaint_start"))
+    builder.row(InlineKeyboardButton(text="⭐ Оценить собеседника", callback_data="rate_start"))
+    builder.row(InlineKeyboardButton(text="❌ Завершить чат", callback_data="end_chat"))
+    return builder.as_markup()
 
-    waiting.append(uid)
-    if len(waiting) >= 2:
-        user1 = waiting.pop(0)
-        user2 = waiting.pop(0)
-        chats[user1] = user2
-        chats[user2] = user1
-        bot.send_message(user1, "✅ Собеседник найден!\n/find — новый\n/stop — завершить")
-        bot.send_message(user2, "✅ Собеседник найден!\n/find — новый\n/stop — завершить")
+def get_rating_kb(target_id):
+    builder = InlineKeyboardBuilder()
+    for i in range(1, 6):
+        builder.button(text="⭐" * i, callback_data=f"rate_{target_id}_{i}")
+    builder.adjust(5)
+    return builder.as_markup()
+
+# --- ИНИЦИАЛИЗАЦИЯ ---
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+# --- ОБРАБОТЧИКИ ---
+
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    async with aiosqlite.connect("bot_database.db") as db:
+        async with db.execute("SELECT nickname FROM users WHERE user_id = ?", (message.from_user.id,)) as cursor:
+            user = await cursor.fetchone()
+    
+    if user and user[0]:
+        await message.answer(f"С возвращением, {user[0]}!", reply_markup=get_main_menu())
     else:
-        bot.send_message(uid, "🔍 Ищу собеседника...")
+        await message.answer("Привет! Давай знакомиться анонимно.\nКак тебя называть? (придумай ник)", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(UserStates.waiting_for_nickname)
 
-@bot.message_handler(commands=['stop'])
-def stop(message):
-    uid = message.from_user.id
-    if uid in chats:
-        partner = chats[uid]
-        del chats[uid]
-        if partner in chats:
-            del chats[partner]
-            bot.send_message(partner, "Собеседник завершил чат. Напиши /find чтобы найти нового.")
-        bot.send_message(uid, "Чат завершён.")
-    elif uid in waiting:
-        waiting.remove(uid)
-        bot.send_message(uid, "Поиск отменён.")
+@dp.message(UserStates.waiting_for_nickname)
+async def process_nickname(message: types.Message, state: FSMContext):
+    await state.update_data(nickname=message.text)
+    await message.answer(f"Приятно познакомиться, {message.text}!\nЧто тебе интересно? (Напиши через запятую, например: музыка, кино, спорт)")
+    await state.set_state(UserStates.waiting_for_interests)
 
-@bot.message_handler(commands=['admin'])
-def admin_panel(message):
+@dp.message(UserStates.waiting_for_interests)
+async def process_interests(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    nickname = data.get('nickname')
+    
+    async with aiosqlite.connect("bot_database.db") as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO users (user_id, nickname, interests) VALUES (?, ?, ?)",
+            (message.from_user.id, nickname, message.text)
+        )
+        await db.commit()
+    
+    await message.answer(f"Отлично, {nickname}! Твои интересы сохранены. Теперь я не буду спрашивать их каждый раз.\n\nИспользуй меню ниже для навигации.", reply_markup=get_main_menu())
+    await state.clear()
+
+# --- ПРОФИЛЬ И РЕЙТИНГ ---
+@dp.message(F.text == "👤 Мой профиль")
+async def show_profile(message: types.Message):
+    async with aiosqlite.connect("bot_database.db") as db:
+        async with db.execute("SELECT nickname, interests FROM users WHERE user_id = ?", (message.from_user.id,)) as cursor:
+            user = await cursor.fetchone()
+    
+    if user:
+        await message.answer(f"👤 **Твой профиль:**\n\nНик: {user[0]}\nИнтересы: {user[1]}")
+    else:
+        await message.answer("Профиль не найден. Напиши /start")
+
+@dp.message(F.text == "⭐ Мой рейтинг")
+async def show_my_rating(message: types.Message):
+    async with aiosqlite.connect("bot_database.db") as db:
+        async with db.execute("SELECT rating_sum, rating_count FROM users WHERE user_id = ?", (message.from_user.id,)) as cursor:
+            user = await cursor.fetchone()
+    
+    if user and user[1] > 0:
+        avg_rating = round(user[0] / user[1], 1)
+        await message.answer(f"⭐ **Твой рейтинг:** {avg_rating} из 5\n📊 Основан на {user[1]} оценках.")
+    else:
+        await message.answer("У тебя пока нет оценок от других пользователей.")
+
+# --- АДМИН ПАНЕЛЬ ---
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message):
     if message.from_user.id != ADMIN_ID:
+        await message.answer("У вас нет доступа к этой команде.")
         return
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"))
-    bot.send_message(message.chat.id, "🛡️ Админ-панель", reply_markup=markup)
+    
+    await message.answer("🛡 **Админ-панель**\nВыбери действие:", reply_markup=get_admin_menu())
 
-@bot.callback_query_handler(func=lambda call: call.data == 'admin_stats')
-def admin_stats(call):
-    if call.from_user.id == ADMIN_ID:
-        bot.send_message(call.message.chat.id, f"📊 Пользователей: {len(users)}\nВ чатах: {len(chats)//2}")
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    async with aiosqlite.connect("bot_database.db") as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+            users_count = (await cursor.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM complaints") as cursor:
+            complaints_count = (await cursor.fetchone())[0]
+    
+    await callback.message.edit_text(f"📊 **Статистика:**\n\n👥 Пользователей: {users_count}\n⚠️ Жалоб: {complaints_count}", reply_markup=get_admin_menu())
+    await callback.answer()
 
-@bot.message_handler(commands=['menu'])
-def show_menu(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("Кнопка 1")
-    btn2 = types.KeyboardButton("Кнопка 2")
-    markup.add(btn1, btn2)
-    bot.send_message(message.chat.id, "Меню:", reply_markup=markup)
-
-@bot.message_handler(func=lambda message: message.text == "Кнопка 1")
-def btn1_click(message):
-    bot.send_message(message.chat.id, "Ты нажал Кнопку 1")
-
-@bot.message_handler(content_types=['text'])
-def forward(message):
-    uid = message.from_user.id
-    if uid in chats:
-        partner = chats[uid]
-        try:
-            bot.send_message(partner, f"💬 {message.text}")
-        except:
-            bot.send_message(uid, "Не удалось отправить.")
+@dp.callback_query(F.data == "admin_complaints")
+async def admin_complaints(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    async with aiosqlite.connect("bot_database.db") as db:
+        async with db.execute("SELECT from_user_id, against_user_id, reason FROM complaints ORDER BY id DESC LIMIT 10") as cursor:
+            complaints = await cursor.fetchall()
+    
+    if not complaints:
+        text = "Жалоб пока нет."
     else:
-        bot.send_message(uid, "Ты не в чате. Напиши /find")
+        text = "⚠️ **Последние жалобы:**\n\n"
+        for c in complaints:
+            text += f"От: {c[0]} | На: {c[1]}\nПричина: {c[2]}\n\n"
+            
+    await callback.message.edit_text(text, reply_markup=get_admin_menu())
+    await callback.answer()
 
-keep_alive.keep_alive()
-print("Бот запущен...")
-bot.infinity_polling()
+# --- ЛОГИКА ЧАТА (Жалоба и Рейтинг) ---
+# Заглушка словаря для связи собеседников (в реальном боте вы заполняете его при поиске)
+active_chats = {} 
+
+@dp.message(F.text == "🔍 Найти собеседника")
+async def find_partner(message: types.Message):
+    # Здесь должна быть ваша логика поиска. Пока для теста:
+    # Допустим, мы нашли собеседника с ID 111222333
+    dummy_partner_id = 111222333 
+    active_chats[message.from_user.id] = dummy_partner_id
+    
+    await message.answer("Вы в чате с анонимом! (Тестовый режим)\nНажмите на кнопки ниже, чтобы взаимодействовать:", 
+                         reply_markup=get_chat_menu())
+
+@dp.callback_query(F.data == "complaint_start")
+async def start_complaint(callback: CallbackQuery, state: FSMContext):
+    partner_id = active_chats.get(callback.from_user.id)
+    if not partner_id:
+        await callback.answer("Вы не в чате!", show_alert=True)
+        return
+        
+    await callback.message.answer("🚨 Напиши причину жалобы на собеседника (текстом):")
+    await state.set_state(UserStates.waiting_for_complaint_reason)
+    await callback.answer()
+
+@dp.message(UserStates.waiting_for_complaint_reason)
+async def process_complaint(message: types.Message, state: FSMContext):
+    partner_id = active_chats.get(message.from_user.id)
+    if not partner_id:
+        await message.answer("Ошибка: вы не в чате.")
+        await state.clear()
+        return
+    
+    async with aiosqlite.connect("bot_database.db") as db:
+        await db.execute("INSERT INTO complaints (from_user_id, against_user_id, reason) VALUES (?, ?, ?)",
+                         (message.from_user.id, partner_id, message.text))
+        await db.commit()
+    
+    await message.answer("✅ Жалоба отправлена администратору. Спасибо!", reply_markup=get_chat_menu())
+    await state.clear()
+    
+    # Уведомление админу
+    await bot.send_message(ADMIN_ID, f"⚠️ **Новая жалоба!**\nОт: {message.from_user.id}\nНа: {partner_id}\nПричина: {message.text}")
+
+@dp.callback_query(F.data == "rate_start")
+async def start_rating(callback: CallbackQuery):
+    partner_id = active_chats.get(callback.from_user.id)
+    if not partner_id:
+        await callback.answer("Вы не в чате!", show_alert=True)
+        return
+        
+    await callback.message.answer("Оцени своего собеседника:", reply_markup=get_rating_kb(partner_id))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("rate_"))
+async def process_rating(callback: CallbackQuery):
+    _, target_id, rating = callback.data.split("_")
+    rating = int(rating)
+    target_id = int(target_id)
+    
+    async with aiosqlite.connect("bot_database.db") as db:
+        await db.execute("UPDATE users SET rating_sum = rating_sum + ?, rating_count = rating_count + 1 WHERE user_id = ?", (rating, target_id))
+        await db.commit()
+    
+    await callback.message.edit_text(f"✅ Ты поставил оценку {rating} звезд(ы). Спасибо!")
+    await callback.answer()
+
+# --- ЗАПУСК ---
+async def main():
+    await init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
