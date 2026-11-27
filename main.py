@@ -135,6 +135,7 @@ def forward(message):
             bot.send_message(uid, "Не удалось отправить.")
     else:
         bot.send_message(uid, "Ты не в чате. Напиши /find")
+        
         # === МЕНЮ С КНОПКАМИ ===
 @bot.message_handler(commands=['menu'])
 def show_menu(message):
