@@ -9,7 +9,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "9199104364:AAFKfPe2d5tw3nmlu010CwjfPm9bH8tXlPQ"
+BOT_TOKEN = "9199104364:AAHAnW48xTlYhqYZ5GcspN_97JRjANxV7Is"
 ADMIN_ID = 6835078005 # Замените на ваш ID (узнать через @userinfobot)
 
 logging.basicConfig(level=logging.INFO)
