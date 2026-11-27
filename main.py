@@ -134,31 +134,18 @@ def forward(message):
         except:
             bot.send_message(uid, "Не удалось отправить.")
     else:
-        bot.send_message(uid, "Ты не в чате. Напиши /find")
-        
-        # === МЕНЮ С КНОПКАМИ ===
+        bot.send_message(uid, "Ты не в чате. Напиши /
 @bot.message_handler(commands=['menu'])
 def show_menu(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
-    btn_user = types.KeyboardButton("👤 User")
-    btn_premium = types.KeyboardButton("⭐ Premium")
-    btn_bot = types.KeyboardButton("👽 Bot")
-    btn_group = types.KeyboardButton("👥 Group")
-    btn_channel = types.KeyboardButton("📢 Channel")
-    btn_forum = types.KeyboardButton("💬 Forum")
-    
-    markup.add(btn_user, btn_premium)
-    markup.add(btn_bot, btn_group)
-    markup.add(btn_channel, btn_forum)
-    
-    bot.send_message(message.chat.id, "Выбери действие:", reply_markup=markup)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton("Кнопка 1")
+    btn2 = types.KeyboardButton("Кнопка 2")
+    markup.add(btn1, btn2)
+    bot.send_message(message.chat.id, "Меню:", reply_markup=markup)
 
-@bot.message_handler(func=lambda message: message.text == "👤 User")
-def handle_user_btn(message):
-    bot.send_message(message.chat.id, "Ты нажал кнопку User!")
-# ========================
-        
+@bot.message_handler(func=lambda message: message.text == "Кнопка 1")
+def btn1_click(message):
+    bot.send_message(message.chat.id, "Ты нажал Кнопку 1")                
 
 keep_alive.keep_alive()
 print("Бот запущен...")
