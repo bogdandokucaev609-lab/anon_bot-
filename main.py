@@ -134,7 +134,7 @@ def forward(message):
         except:
             bot.send_message(uid, "Не удалось отправить.")
     else:
-        bot.send_message(uid, "Ты не в чате. Напиши /
+        bot.send_message(uid, "Ты не в чате. Напиши /find)
 @bot.message_handler(commands=['menu'])
 def show_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
