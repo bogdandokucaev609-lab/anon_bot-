@@ -10,8 +10,8 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "9199104364:AAER0g6UHIjBv_aPUIxPJoth6V6EtLVr6IE"
-ADMIN_ID = 6835078005
+BOT_TOKEN = "9199104364:AAER0g6UHIjBv_aPUIxPJoth6V6EtLVr6IE" # Вставь свой токен
+ADMIN_ID = 6835078005 # Твой ID
 
 logging.basicConfig(level=logging.INFO)
 
@@ -44,7 +44,6 @@ async def init_db():
                 reason TEXT
             )
         """)
-        # Обновляем старую базу, если в ней нет новых колонок
         try:
             await db.execute("ALTER TABLE users ADD COLUMN avatar_file_id TEXT")
             await db.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0")
@@ -62,9 +61,9 @@ class UserStates(StatesGroup):
     waiting_for_complaint_reason = State()
     waiting_for_ban_id = State()
 
-# --- ОЧЕРЕДЬ И ЧАТЫ (В ОПЕРАТИВНОЙ ПАМЯТИ) ---
-waiting_users = []  # Список ID пользователей, которые ищут собеседника
-active_chats = {}   # {user1_id: user2_id, user2_id: user1_id}
+# --- ОЧЕРЕДЬ И ЧАТЫ ---
+waiting_users = []
+active_chats = {}
 
 # --- КЛАВИАТУРЫ ---
 def get_main_menu():
@@ -105,20 +104,20 @@ def get_rating_menu(partner_id):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- ОБРАБОТЧИКИ СТАРТА ---
+# ==========================================
+# ОБРАБОТЧИКИ КОМАНД И МЕНЮ
+# ==========================================
+
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     uid = message.from_user.id
-    
     async with aiosqlite.connect("bot_database.db") as db:
         async with db.execute("SELECT nickname, is_banned FROM users WHERE user_id = ?", (uid,)) as cursor:
             user = await cursor.fetchone()
-            
     if user and user[1] == 1:
         await message.answer("🚫 Вы заблокированы за нарушение правил.")
         return
-
     if user and user[0]:
         await message.answer(f"С возвращением, {user[0]}!", reply_markup=get_main_menu())
     else:
@@ -144,13 +143,11 @@ async def process_interests(message: types.Message, state: FSMContext):
     await message.answer(f"Отлично, {nickname}! Профиль создан. Жми '🔍 Найти собеседника'!", reply_markup=get_main_menu())
     await state.clear()
 
-# --- ПРОФИЛЬ И НАСТРОЙКИ ---
 @dp.message(F.text == "👤 Мой профиль")
 async def show_profile(message: types.Message):
     async with aiosqlite.connect("bot_database.db") as db:
         async with db.execute("SELECT nickname, interests, avatar_file_id FROM users WHERE user_id = ?", (message.from_user.id,)) as cursor:
             user = await cursor.fetchone()
-    
     if user:
         text = f"👤 **Твой профиль:**\n\nНик: {user[0]}\nИнтересы: {user[1]}"
         if user[2]:
@@ -164,7 +161,6 @@ async def show_profile(message: types.Message):
 async def show_settings(message: types.Message):
     await message.answer("⚙️ **Настройки профиля**\nВыбери, что хочешь изменить:", reply_markup=get_settings_menu())
 
-# --- ИЗМЕНЕНИЕ НИКА ---
 @dp.callback_query(F.data == "set_nick")
 async def ask_new_nick(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Напиши свой новый ник:")
@@ -179,7 +175,6 @@ async def save_new_nick(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Ник изменен на {message.text}!", reply_markup=get_main_menu())
     await state.clear()
 
-# --- ИЗМЕНЕНИЕ ИНТЕРЕСОВ ---
 @dp.callback_query(F.data == "set_interests")
 async def ask_new_interests(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Напиши свои новые интересы:")
@@ -194,7 +189,6 @@ async def save_new_interests(message: types.Message, state: FSMContext):
     await message.answer("✅ Интересы обновлены!", reply_markup=get_main_menu())
     await state.clear()
 
-# --- УСТАНОВКА АВАТАРКИ ---
 @dp.callback_query(F.data == "set_avatar")
 async def ask_avatar(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Отправь мне фото, которое хочешь поставить на аватарку:")
@@ -210,13 +204,11 @@ async def save_avatar(message: types.Message, state: FSMContext):
     await message.answer_photo(file_id, caption="✅ Аватарка установлена!", reply_markup=get_main_menu())
     await state.clear()
 
-# --- РЕЙТИНГ (В НАСТРОЙКАХ) ---
 @dp.callback_query(F.data == "show_my_rating")
 async def show_rating_callback(callback: CallbackQuery):
     async with aiosqlite.connect("bot_database.db") as db:
         async with db.execute("SELECT rating_sum, rating_count FROM users WHERE user_id = ?", (callback.from_user.id,)) as cursor:
             user = await cursor.fetchone()
-    
     if user and user[1] > 0:
         avg_rating = round(user[0] / user[1], 1)
         await callback.message.answer(f"⭐ **Твой рейтинг:** {avg_rating} из 5\n📊 Оценок: {user[1]}")
@@ -224,7 +216,7 @@ async def show_rating_callback(callback: CallbackQuery):
         await callback.message.answer("У тебя пока нет оценок. Пообщайся с кем-нибудь!")
     await callback.answer()
 
-# --- РЕАЛЬНЫЙ ПОИСК СОБЕСЕДНИКА ---
+# --- ПОИСК ---
 async def start_search(user_id, message_obj):
     if user_id in active_chats:
         await message_obj.answer("Ты уже в чате! Заверши его, чтобы искать нового.")
@@ -232,16 +224,12 @@ async def start_search(user_id, message_obj):
     if user_id in waiting_users:
         await message_obj.answer("🔍 Уже ищу... подожди.")
         return
-
     waiting_users.append(user_id)
-
     if len(waiting_users) >= 2:
         user1 = waiting_users.pop(0)
         user2 = waiting_users.pop(0)
-        
         active_chats[user1] = user2
         active_chats[user2] = user1
-        
         text = "✅ **Собеседник найден!**\nОбщайтесь анонимно. Можете кидать фото, стикеры и текст.\n\nКогда надоест, нажмите 'Следующий' или 'Завершить'."
         try:
             await bot.send_message(user1, text, reply_markup=get_chat_menu())
@@ -255,7 +243,7 @@ async def start_search(user_id, message_obj):
 async def find_partner_btn(message: types.Message):
     await start_search(message.from_user.id, message)
 
-# --- ЗАВЕРШЕНИЕ ЧАТА И ОЦЕНКА ---
+# --- ЗАВЕРШЕНИЕ ЧАТА ---
 async def end_current_chat(uid):
     if uid in active_chats:
         partner = active_chats[uid]
@@ -286,7 +274,6 @@ async def next_partner_callback(callback: CallbackQuery):
             await bot.send_message(partner, "Собеседник переключился на нового. Оцените общение:", reply_markup=get_rating_menu(callback.from_user.id))
         except:
             pass
-    
     await callback.message.edit_text("⏭ Ищем нового собеседника...")
     await start_search(callback.from_user.id, callback.message)
     await callback.answer()
@@ -296,50 +283,26 @@ async def skip_rate_callback(callback: CallbackQuery):
     await callback.message.edit_text("Жми '🔍 Найти собеседника' в меню!")
     await callback.answer()
 
-# --- ВЗАИМНЫЕ СИМПАТИИ ---
+# --- СИМПАТИИ ---
 @dp.callback_query(F.data.startswith("like_"))
 async def like_partner_callback(callback: CallbackQuery):
     partner_id = int(callback.data.split("_")[1])
     uid = callback.from_user.id
-    
-    # Записываем симпатию в базу
     async with aiosqlite.connect("bot_database.db") as db:
         await db.execute("INSERT OR IGNORE INTO likes (from_id, to_id) VALUES (?, ?)", (uid, partner_id))
         await db.commit()
-        
-        # Проверяем, поставил ли собеседник симпатию в ответ
         async with db.execute("SELECT 1 FROM likes WHERE from_id = ? AND to_id = ?", (partner_id, uid)) as cursor:
             if await cursor.fetchone():
-                # Взаимная симпатия!
                 await callback.message.edit_text("🎉 **Взаимная симпатия!** Вы понравились друг другу. Вот твой контакт для связи:")
                 try:
                     await bot.send_message(partner_id, f"🎉 **Взаимная симпатия!** Вы понравились друг другу. Твой собеседник: @{callback.from_user.username or 'скрыт'}")
                 except:
                     pass
-                # Отправляем юзернейм
                 my_username = callback.from_user.username or "скрыт"
                 await bot.send_message(partner_id, f"Его юзернейм: @{my_username}")
                 return
-                
     await callback.message.edit_text("❤️ Ты поставил симпатию! Если собеседник ответит взаимностью, я вас познакомлю.")
     await callback.answer()
-
-# --- ПЕРЕСЫЛКА ВСЕХ СООБЩЕНИЙ (ТЕКСТ, ФОТО, СТИКЕРЫ) ---
-@dp.message()
-async def forward_message(message: types.Message):
-    uid = message.from_user.id
-    
-    # Если пользователь в активном чате - пересылаем
-    if uid in active_chats:
-        partner = active_chats[uid]
-        try:
-            # copy_message пересылает ВСЁ: фото, стикеры, гифки, текст, голосовые
-            await bot.copy_message(chat_id=partner, from_chat_id=uid, message_id=message.message_id)
-        except Exception:
-            await message.answer("Не удалось отправить. Собеседник заблокировал бота.")
-    else:
-        if message.text not in ["👤 Мой профиль", "🔍 Найти собеседника", "⚙️ Настройки"]:
-            await message.answer("Ты не в чате. Нажми '🔍 Найти собеседника' чтобы начать общение.")
 
 # --- ЖАЛОБЫ ---
 @dp.callback_query(F.data == "complaint_start")
@@ -361,10 +324,14 @@ async def process_complaint(message: types.Message, state: FSMContext):
     await message.answer("✅ Жалоба отправлена администратору.", reply_markup=get_chat_menu())
     await state.clear()
 
-# --- АДМИН ПАНЕЛЬ ---
+
+# ==========================================
+# ⚠️ АДМИН ПАНЕЛЬ (ДОЛЖНА БЫТЬ ВЫШЕ ПЕРЕСЫЛКИ!) ⚠️
+# ==========================================
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.from_user.id != ADMIN_ID: 
+        return
     await message.answer("🛡 **Админ-панель**", reply_markup=get_admin_menu())
 
 @dp.callback_query(F.data == "admin_stats")
@@ -410,6 +377,28 @@ async def process_ban(message: types.Message, state: FSMContext):
     except:
         await message.answer("Ошибка: ID должен быть числом.")
     await state.clear()
+
+
+# ==========================================
+# ПЕРЕСЫЛКА СООБЩЕНИЙ (ДОЛЖНА БЫТЬ В САМОМ КОНЦЕ!)
+# ==========================================
+@dp.message()
+async def forward_message(message: types.Message):
+    uid = message.from_user.id
+    
+    # 🔥 ВАЖНО: Пропускаем команды, чтобы они не застревали в пересылке
+    if message.text and message.text.startswith('/'):
+        return
+
+    if uid in active_chats:
+        partner = active_chats[uid]
+        try:
+            await bot.copy_message(chat_id=partner, from_chat_id=uid, message_id=message.message_id)
+        except Exception:
+            await message.answer("Не удалось отправить. Собеседник заблокировал бота.")
+    else:
+        if message.text not in ["👤 Мой профиль", "🔍 Найти собеседника", "⚙️ Настройки"]:
+            await message.answer("Ты не в чате. Нажми '🔍 Найти собеседника' чтобы начать общение.")
 
 # --- ЗАПУСК ---
 async def main():
